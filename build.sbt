@@ -8,6 +8,8 @@ version := "1.0.0-SNAPSHOT"
 
 scalaVersion := "2.11.8"
 
+crossScalaVersions := Seq("2.10.5", "2.11.7")
+
 resolvers ++= Seq(
   Resolver.sonatypeRepo("snapshots"),
   "Scalaz Bintray Repo" at "http://dl.bintray.com/scalaz/releases")
