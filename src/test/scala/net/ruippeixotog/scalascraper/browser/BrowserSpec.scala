@@ -1,132 +1,172 @@
 package net.ruippeixotog.scalascraper.browser
 
 import java.io.File
-import java.net.URL
 
-import org.jsoup.Connection
-import org.jsoup.Connection._
-import org.jsoup.parser.Parser
+import org.http4s.{ UrlForm, headers, Uri, HttpService }
+import org.http4s.dsl._
 import org.specs2.mutable.Specification
-import scala.collection.convert.WrapAsJava._
-import scala.collection.mutable
 
-// TODO missing tests for HTTP request execution
-class BrowserSpec extends Specification {
+class BrowserSpec extends Specification with BrowserHelper with TestServer {
+
+  val html = """
+    <html>
+      <head id="hid">
+        <title>Test Page</title>
+      </head>
+      <body id="bid" data-a="a" data-b="b">
+        <div id="a1">
+          <a></a>
+          <div></div>
+        </div>
+        <span></span>
+        <span id="t">this is <b>some</b> text</span>
+      </body>
+    <html>"""
+
+  def uri(uriStr: String) = Uri.fromString(uriStr).validation.getOrElse(throw new Exception)
+  def wrapHtml(str: String) = s"<html><body>$str</body></html>"
+
+  lazy val testService = HttpService {
+    case GET -> Root / "hello" => Ok(html)
+
+    case req @ POST -> Root / "form" =>
+      req.decode[UrlForm] { form =>
+        val dataHtml = form.values.map { case (k, vs) => s"""<span id="$k">${vs.head}</span>""" }.mkString
+        Ok(wrapHtml(dataHtml))
+      }
+
+    case GET -> Root / "redirect" => Found(uri(s"http://localhost:$testServerPort/redirected"))
+    case GET -> Root / "redirected" => Ok(wrapHtml("redirected"))
+
+    case GET -> Root / "setcookieA" => Ok("cookie set").addCookie("a", "4")
+    case GET -> Root / "setcookieB" => Ok("cookie set").addCookie("b", "5")
+    case req @ GET -> Root / "cookies" =>
+      val cookies = req.headers.get(headers.Cookie).toSeq.flatMap(_.values.list).sortBy(_.name)
+      val cookiesStr = cookies.map { c => s"${c.name}=${c.content}" }.mkString(";")
+      Ok(wrapHtml(cookiesStr))
+  }
 
   "A Browser" should {
 
-    case class MockResponse(url: URL,
-                            method: Method = Method.GET,
-                            statusCode: Int = 200,
-                            charset: String = "UTF-8",
-                            contentType: String = "text/html",
-                            body: String = "",
-                            cookieMap: Map[String, String] = Map.empty,
-                            headerMap: Map[String, String] = Map.empty) extends Response {
+    usingBrowsers(JsoupBrowser(), HtmlUnitBrowser()) { browser =>
 
-      def statusMessage() = body
-      def bodyAsBytes() = body.getBytes
+      "do GET requests and parse correctly the returned HTML" in {
+        val body = browser.get(s"http://localhost:$testServerPort/hello").body
 
-      def parse() = Parser.htmlParser.parseInput(body, url.toString)
+        body.tagName mustEqual "body"
+        body.children.size mustEqual 3
 
-      def url(url: URL) = copy(url = url)
-      def method(method: Method) = copy(method = method)
-
-      def header(name: String) = headerMap(name)
-      def header(name: String, value: String) = copy(headerMap = headerMap + (name -> value))
-      def headers() = headerMap
-      def hasHeader(name: String) = headerMap.contains(name)
-      def hasHeaderWithValue(name: String, value: String) = headerMap.get(name).contains(value)
-      def removeHeader(name: String) = copy(headerMap = headerMap - name)
-
-      def cookie(name: String) = cookieMap(name)
-      def cookie(name: String, value: String) = copy(cookieMap = cookieMap + (name -> value))
-      def cookies() = cookieMap
-      def hasCookie(name: String) = cookieMap.contains(name)
-      def removeCookie(name: String) = copy(cookieMap = cookieMap - name)
-    }
-
-    implicit def stringAsUrl(str: String) = new URL(str)
-
-    class MockBrowser(userAgent: String = "jsoup/1.8") extends Browser(userAgent) {
-      val executedRequests = mutable.ListBuffer.empty[Request]
-      val mockResponses = mutable.Map.empty[URL, Response]
-
-      def addMockResponse(res: Response) = mockResponses += res.url -> res
-
-      override def executeRequest(conn: Connection) = {
-        val req = conn.request
-        executedRequests += req
-        mockResponses.getOrElse(req.url, MockResponse(req.url))
+        val div = body.children.head
+        div.tagName mustEqual "div"
+        div.attr("id") mustEqual "a1"
+        div.children.size mustEqual 2
       }
-    }
 
-    val html = """
-      <html>
-        <body id="bid">
-          <div id="a1">
-            <a></a>
-            <div></div>
-          </div>
-        </body>
-      <html>"""
+      "do POST requests and parse correctly the returned HTML" in {
+        val params = Map("a" -> "1", "b" -> "bbb", "c1" -> "data")
+        val doc = browser.post(s"http://localhost:$testServerPort/form", params)
 
-    "parse correctly HTML from a string" in {
-      val body = new Browser().parseString(html).body
+        doc.root.select("#a").head.text mustEqual "1"
+        doc.root.select("#b").head.text mustEqual "bbb"
+        doc.root.select("#c1").head.text mustEqual "data"
+      }
 
-      body.nodeName mustEqual "body"
-      body.children.size mustEqual 1
+      "parse correctly HTML from a string" in {
+        val body = browser.parseString(html).body
 
-      val div = body.child(0)
-      div.nodeName mustEqual "div"
-      div.attr("id") mustEqual "a1"
-      div.children.size mustEqual 2
-    }
+        body.tagName mustEqual "body"
+        body.children.size mustEqual 3
 
-    "parse correctly HTML from a file" in {
-      val file = new File(getClass.getClassLoader.getResource("test.html").toURI)
-      val body = new Browser().parseFile(file).body
+        val div = body.children.head
+        div.tagName mustEqual "div"
+        div.attr("id") mustEqual "a1"
+        div.children.size mustEqual 2
+      }
 
-      body.nodeName mustEqual "body"
-      body.children.size mustEqual 1
+      "parse correctly HTML from a file" in {
+        val file = new File(getClass.getClassLoader.getResource("test.html").toURI)
+        val body = browser.parseFile(file).body
 
-      val div = body.child(0)
-      div.nodeName mustEqual "div"
-      div.attr("id") mustEqual "a1"
-      div.children.size mustEqual 2
-    }
+        body.tagName mustEqual "body"
+        body.children.size mustEqual 1
 
-    "execute requests with the specified User-Agent" in {
-      val browser = new MockBrowser("test-agent")
-      browser.addMockResponse(MockResponse("http://example.com"))
-      browser.get("http://example.com")
-      browser.executedRequests.headOption must beSome.which(
-        _.header("User-Agent") mustEqual "test-agent")
-    }
+        val div = body.children.head
+        div.tagName mustEqual "div"
+        div.attr("id") mustEqual "a1"
+        div.children.size mustEqual 2
+      }
 
-    "follow redirects specified in 'Location' headers" in {
-      val browser = new MockBrowser()
+      "follow redirects" in {
+        val doc = browser.get(s"http://localhost:$testServerPort/redirect")
+        doc.location mustEqual s"http://localhost:$testServerPort/redirected"
+        doc.body.text mustEqual "redirected"
+      }
 
-      browser.addMockResponse(MockResponse("http://example.com/original",
-        headerMap = Map("Location" -> "http://example.com/redirected")))
+      "keep and use cookies between requests" in {
+        browser.get(s"http://localhost:$testServerPort/setcookieA")
+        val doc = browser.get(s"http://localhost:$testServerPort/cookies")
+        doc.body.text mustEqual "a=4"
 
-      browser.addMockResponse(MockResponse("http://example.com/redirected", body = html))
+        browser.get(s"http://localhost:$testServerPort/setcookieB")
+        val doc2 = browser.get(s"http://localhost:$testServerPort/cookies")
+        doc2.body.text mustEqual "a=4;b=5"
+      }
 
-      browser.get("http://example.com/original").body.attr("id") mustEqual "bid"
-    }
+      "return Document implementations" in {
 
-    "keep and use cookies between requests" in {
-      val browser = new MockBrowser()
+        "with a correct location method" in {
+          val doc = browser.get(s"http://localhost:$testServerPort/hello")
 
-      browser.addMockResponse(MockResponse("http://example.com?id=2", cookieMap = Map("a" -> "4")))
-      browser.get("http://example.com?id=2")
-      browser.cookies.get("a") must beSome("4")
-      browser.cookies.get("b") must beNone
+          doc.location mustEqual s"http://localhost:$testServerPort/hello"
+        }
 
-      browser.addMockResponse(MockResponse("http://example.com?id=3", cookieMap = Map("b" -> "5")))
-      browser.get("http://example.com?id=3")
-      browser.cookies.get("a") must beSome("4")
-      browser.cookies.get("b") must beSome("5")
+        "with correct title, head and body methods" in {
+          val doc = browser.get(s"http://localhost:$testServerPort/hello")
+
+          doc.title mustEqual "Test Page"
+          doc.head.attr("id") mustEqual "hid"
+          doc.body.attr("id") mustEqual "bid"
+        }
+
+        "with a correct toHtml method" in {
+          val doc = browser.get(s"http://localhost:$testServerPort/hello")
+          val docStr = doc.toHtml
+
+          browser.parseString(docStr).toHtml mustEqual docStr
+        }
+      }
+
+      "return Element implementations" should {
+
+        "with correct parent and children methods" in {
+          val doc = browser.parseString(html)
+
+          val body = doc.body
+          body.parent must beSome.which { p => p.tagName mustEqual "html" }
+          body.children.map(_.tagName) mustEqual Iterable("div", "span", "span")
+
+          val a = doc.root.select("a").head
+          a.parent must beSome.which { p => p.attr("id") mustEqual "a1" }
+          a.children must beEmpty
+        }
+
+        "with correct attr and attrs methods" in {
+          val doc = browser.parseString(html)
+
+          val body = doc.body
+          body.attrs mustEqual Map("id" -> "bid", "data-a" -> "a", "data-b" -> "b")
+          body.attr("id") mustEqual "bid"
+          body.attr("data-b") mustEqual "b"
+        }
+
+        "with correct innerHtml and outerHtml methods" in {
+          val doc = browser.parseString(html)
+
+          val textNode = doc.root.select("#t").head
+          textNode.innerHtml mustEqual "this is <b>some</b> text"
+          textNode.outerHtml mustEqual "<span id=\"t\">this is <b>some</b> text</span>"
+        }
+      }
     }
   }
 }

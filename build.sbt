@@ -4,25 +4,31 @@ name := "scala-scraper"
 
 organization := "net.ruippeixotog"
 
-version := "0.1.3-SNAPSHOT"
+version := "1.0.0-SNAPSHOT"
 
-scalaVersion := "2.11.7"
+scalaVersion := "2.11.8"
 
 crossScalaVersions := Seq("2.10.5", "2.11.7")
 
-resolvers += "Scalaz Bintray Repo" at "http://dl.bintray.com/scalaz/releases"
+resolvers ++= Seq(
+  Resolver.sonatypeRepo("snapshots"),
+  "Scalaz Bintray Repo" at "http://dl.bintray.com/scalaz/releases")
 
 libraryDependencies ++= Seq(
-  "com.github.nscala-time"     %% "nscala-time"     % "2.4.0",
-  "com.typesafe"                % "config"          % "1.3.0",
-  "org.jsoup"                   % "jsoup"           % "1.8.3",
-  "org.scalaz"                 %% "scalaz-core"     % "7.1.4",
-  "org.specs2"                 %% "specs2-core"     % "3.6.5"  % "test")
+  "com.github.nscala-time"     %% "nscala-time"          % "2.10.0",
+  "com.typesafe"                % "config"               % "1.3.0",
+  "net.sourceforge.htmlunit"    % "htmlunit"             % "2.20",
+  "org.jsoup"                   % "jsoup"                % "1.8.3",
+  "org.scalaz"                 %% "scalaz-core"          % "7.2.1",
+  "org.http4s"                 %% "http4s-blaze-server"  % "0.14.0-SNAPSHOT"      % "test",
+  "org.http4s"                 %% "http4s-dsl"           % "0.14.0-SNAPSHOT"      % "test",
+  "org.slf4j"                   % "slf4j-nop"            % "1.7.18"               % "test",
+  "org.specs2"                 %% "specs2-core"          % "3.7.2"                % "test")
 
-scalariformSettings
-
-ScalariformKeys.preferences := ScalariformKeys.preferences.value.
-  setPreference(AlignParameters, true)
+scalariformPreferences := scalariformPreferences.value
+  .setPreference(DanglingCloseParenthesis, Prevent)
+  .setPreference(DoubleIndentClassDeclaration, true)
+  .setPreference(PlaceScaladocAsterisksBeneathSecondAsterisk, true)
 
 scalacOptions ++= Seq(
   "-deprecation",
